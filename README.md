@@ -7,9 +7,6 @@ Diese Custom Integration zeigt die Internet-Tickets der FRITZ!Box in Home Assist
 - Anzahl der Tickets als Sensor
 - UI-Konfiguration (kein YAML)
 - Manuelles Aktualisieren möglich
-# FRITZ!Box Internet Tickets
-
-Home Assistant Custom Integration zur Anzeige der Internet-Tickets der FRITZ!Box.
 
 ## Funktionen
 - Anzeige der Ticket-IDs
