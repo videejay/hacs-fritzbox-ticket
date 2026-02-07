@@ -5,4 +5,5 @@
   "documentation": "https://github.com/videejay/hacs-fritzbox-ticket/",
   "config_flow": true,
   "iot_class": "local_polling"
+  "loggers": ["custom_components.fritzbox_tickets"]
 }
