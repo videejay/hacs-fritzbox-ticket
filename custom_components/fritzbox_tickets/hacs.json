@@ -1,0 +1,7 @@
+{
+  "name": "FRITZ!Box Internet Tickets",
+  "content_in_root": false,
+  "domains": ["fritzbox_tickets"],
+  "country": ["DE"],
+  "homeassistant": "2023.8.0"
+}
