@@ -1,1 +1,18 @@
-{}
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "FRITZ!Box Internet Tickets",
+        "description": "Zugangsdaten für die FRITZ!Box eingeben",
+        "data": {
+          "host": "FRITZ!Box Adresse",
+          "username": "Benutzername",
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zur FRITZ!Box fehlgeschlagen"
+    }
+  }
+}
