@@ -93,19 +93,19 @@ class FritzboxTicketsSensor(Entity):
             sid = await self._get_sid(session)
 
             async with session.get(
-                f"{self._host}/data.lua",
+                f"{self._host}/luaquery.lua",
                 params={
                     "sid": sid,
-                    "lang": "de",
-                    "page": "kids_profile",
+                    "query": "userticket:settings/ticket/list(id)"
                 },
                 timeout=10,
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
 
-        self._tickets = [
-            t["id"]
-            for t in data.get("data", {}).get("tickets", [])
-            if "id" in t
-        ]
+        tickets = []
+        for entry in data:
+            if "id" in entry:
+                tickets.append(entry["id"])
+
+        self._tickets = tickets
