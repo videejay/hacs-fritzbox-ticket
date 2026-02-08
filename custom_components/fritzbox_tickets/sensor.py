@@ -10,39 +10,38 @@ from homeassistant.core import HomeAssistant
 
 from .const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 
-# Home Assistant polling interval
+# Polling interval
 SCAN_INTERVAL = timedelta(minutes=5)
 
-# FRITZ!Box SID validity (renew a bit earlier than real timeout)
+# SID validity
 SID_LIFETIME = timedelta(minutes=9)
+
+# Possible AVM luaQuery endpoints (FRITZ!OS dependent)
+LUAQUERY_PATHS = [
+    "/luaquery.lua",
+    "/luaquery",
+    "/query.lua",
+    "/cgi-bin/luaquery.lua",
+]
 
 
 async def _login_sid(session, host, username, password):
-    """
-    Perform AVM challenge-response login and return SID
-    """
-    # Step 1: get challenge
     async with session.get(f"{host}/login_sid.lua", timeout=10) as resp:
         xml = await resp.text()
         root = ET.fromstring(xml)
         challenge = root.findtext("Challenge")
 
     if not challenge:
-        raise Exception("FRITZ!Box did not return challenge")
+        raise Exception("No challenge from FRITZ!Box")
 
-    # Step 2: calculate response
     response_hash = hashlib.md5(
         f"{challenge}-{password}".encode("utf-16le")
     ).hexdigest()
     response = f"{challenge}-{response_hash}"
 
-    # Step 3: request SID
     async with session.get(
         f"{host}/login_sid.lua",
-        params={
-            "username": username,
-            "response": response,
-        },
+        params={"username": username, "response": response},
         timeout=10,
     ) as resp:
         xml = await resp.text()
@@ -50,7 +49,7 @@ async def _login_sid(session, host, username, password):
         sid = root.findtext("SID")
 
     if not sid or sid == "0000000000000000":
-        raise Exception("FRITZ!Box SID login failed")
+        raise Exception("SID login failed")
 
     return sid
 
@@ -65,8 +64,8 @@ async def async_setup_entry(
 
 class FritzboxTicketsSensor(Entity):
     """
-    Sensor exposing FRITZ!Box Internet Tickets
-    using AVM luaQuery.
+    FRITZ!Box Internet Tickets sensor
+    (AVM luaQuery implementation)
     """
 
     def __init__(self, data):
@@ -78,6 +77,8 @@ class FritzboxTicketsSensor(Entity):
 
         self._sid = None
         self._sid_valid_until = None
+
+        self._luaquery_path = None  # autodetected
 
     @property
     def name(self):
@@ -93,14 +94,9 @@ class FritzboxTicketsSensor(Entity):
 
     @property
     def extra_state_attributes(self):
-        return {
-            "tickets": self._tickets
-        }
+        return {"tickets": self._tickets}
 
     async def _get_sid(self, session):
-        """
-        Return cached SID or perform login if expired
-        """
         now = datetime.utcnow()
 
         if (
@@ -120,17 +116,39 @@ class FritzboxTicketsSensor(Entity):
 
         return self._sid
 
+    async def _detect_luaquery_path(self, session, sid):
+        """
+        Detect working luaQuery endpoint (FRITZ!OS dependent)
+        """
+        for path in LUAQUERY_PATHS:
+            try:
+                async with session.get(
+                    f"{self._host}{path}",
+                    params={
+                        "sid": sid,
+                        "query": "userticket:settings/ticket/list(id)",
+                    },
+                    timeout=10,
+                ) as resp:
+                    if resp.status == 200:
+                        return path
+            except Exception:
+                continue
+
+        raise Exception("No working luaQuery endpoint found")
+
     async def async_update(self):
-        """
-        Fetch ticket list via AVM luaQuery
-        (same mechanism as FHEM)
-        """
         try:
             async with aiohttp.ClientSession() as session:
                 sid = await self._get_sid(session)
 
+                if not self._luaquery_path:
+                    self._luaquery_path = await self._detect_luaquery_path(
+                        session, sid
+                    )
+
                 async with session.get(
-                    f"{self._host}/luaquery.lua",
+                    f"{self._host}{self._luaquery_path}",
                     params={
                         "sid": sid,
                         "query": "userticket:settings/ticket/list(id)",
@@ -149,6 +167,5 @@ class FritzboxTicketsSensor(Entity):
             self._tickets = tickets
 
         except asyncio.CancelledError:
-            # Home Assistant shutdown / restart in progress
-            # -> do not log as error
+            # Home Assistant shutdown / restart
             return
