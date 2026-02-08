@@ -7,6 +7,7 @@ from datetime import timedelta, datetime
 from homeassistant.helpers.entity import Entity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 
@@ -16,17 +17,19 @@ SCAN_INTERVAL = timedelta(minutes=5)
 # SID validity
 SID_LIFETIME = timedelta(minutes=9)
 
-# Possible AVM luaQuery endpoints (FRITZ!OS dependent)
-LUAQUERY_PATHS = [
+# Possible AVM luaQuery endpoints
+LUAQUERY_PATHS = (
     "/luaquery.lua",
     "/luaquery",
     "/query.lua",
     "/cgi-bin/luaquery.lua",
-]
+)
+
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=5)
 
 
 async def _login_sid(session, host, username, password):
-    async with session.get(f"{host}/login_sid.lua", timeout=10) as resp:
+    async with session.get(f"{host}/login_sid.lua", timeout=REQUEST_TIMEOUT) as resp:
         xml = await resp.text()
         root = ET.fromstring(xml)
         challenge = root.findtext("Challenge")
@@ -42,7 +45,7 @@ async def _login_sid(session, host, username, password):
     async with session.get(
         f"{host}/login_sid.lua",
         params={"username": username, "response": response},
-        timeout=10,
+        timeout=REQUEST_TIMEOUT,
     ) as resp:
         xml = await resp.text()
         root = ET.fromstring(xml)
@@ -59,16 +62,17 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities,
 ):
-    async_add_entities([FritzboxTicketsSensor(entry.data)])
+    async_add_entities([FritzboxTicketsSensor(hass, entry.data)])
 
 
 class FritzboxTicketsSensor(Entity):
     """
     FRITZ!Box Internet Tickets sensor
-    (AVM luaQuery implementation)
+    (HA-watchdog safe)
     """
 
-    def __init__(self, data):
+    def __init__(self, hass: HomeAssistant, data):
+        self._hass = hass
         self._host = data[CONF_HOST]
         self._username = data[CONF_USERNAME]
         self._password = data[CONF_PASSWORD]
@@ -77,12 +81,14 @@ class FritzboxTicketsSensor(Entity):
 
         self._sid = None
         self._sid_valid_until = None
+        self._luaquery_path = None
 
-        self._luaquery_path = None  # autodetected
+        # Shared HA aiohttp session
+        self._session = async_get_clientsession(hass)
 
     @property
     def name(self):
-        return "FRITZ!Box Internet Tickets"
+        return "Tickets"
 
     @property
     def unique_id(self):
@@ -96,7 +102,7 @@ class FritzboxTicketsSensor(Entity):
     def extra_state_attributes(self):
         return {"tickets": self._tickets}
 
-    async def _get_sid(self, session):
+    async def _get_sid(self):
         now = datetime.utcnow()
 
         if (
@@ -107,28 +113,24 @@ class FritzboxTicketsSensor(Entity):
             return self._sid
 
         self._sid = await _login_sid(
-            session,
+            self._session,
             self._host,
             self._username,
             self._password,
         )
         self._sid_valid_until = now + SID_LIFETIME
-
         return self._sid
 
-    async def _detect_luaquery_path(self, session, sid):
-        """
-        Detect working luaQuery endpoint (FRITZ!OS dependent)
-        """
+    async def _detect_luaquery_path(self, sid):
         for path in LUAQUERY_PATHS:
             try:
-                async with session.get(
+                async with self._session.get(
                     f"{self._host}{path}",
                     params={
                         "sid": sid,
                         "query": "userticket:settings/ticket/list(id)",
                     },
-                    timeout=10,
+                    timeout=REQUEST_TIMEOUT,
                 ) as resp:
                     if resp.status == 200:
                         return path
@@ -139,24 +141,22 @@ class FritzboxTicketsSensor(Entity):
 
     async def async_update(self):
         try:
-            async with aiohttp.ClientSession() as session:
-                sid = await self._get_sid(session)
+            sid = await self._get_sid()
 
-                if not self._luaquery_path:
-                    self._luaquery_path = await self._detect_luaquery_path(
-                        session, sid
-                    )
+            if not self._luaquery_path:
+                # Detect once, cache forever
+                self._luaquery_path = await self._detect_luaquery_path(sid)
 
-                async with session.get(
-                    f"{self._host}{self._luaquery_path}",
-                    params={
-                        "sid": sid,
-                        "query": "userticket:settings/ticket/list(id)",
-                    },
-                    timeout=10,
-                ) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
+            async with self._session.get(
+                f"{self._host}{self._luaquery_path}",
+                params={
+                    "sid": sid,
+                    "query": "userticket:settings/ticket/list(id)",
+                },
+                timeout=REQUEST_TIMEOUT,
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
 
             tickets = []
             if isinstance(data, list):
@@ -167,5 +167,5 @@ class FritzboxTicketsSensor(Entity):
             self._tickets = tickets
 
         except asyncio.CancelledError:
-            # Home Assistant shutdown / restart
+            # Shutdown / reload
             return
