@@ -1,0 +1,26 @@
+title: FRITZ!Box Tickets
+views:
+  - title: Übersicht
+    path: overview
+    icon: mdi:ticket
+    cards:
+      - type: tile
+        entity: sensor.tickets
+        name: Internet-Tickets
+        icon: mdi:ticket
+
+      - type: button
+        entity: button.tickets_aktualisieren
+        name: Tickets aktualisieren
+        icon: mdi:refresh
+
+      - type: markdown
+        content: |
+          ## 🎟️ Internet-Tickets
+          {% if state_attr('sensor.tickets', 'tickets') %}
+          {% for t in state_attr('sensor.tickets', 'tickets') %}
+          • Ticket-ID: **{{ t }}**
+          {% endfor %}
+          {% else %}
+          Keine Tickets vorhanden
+          {% endif %}
