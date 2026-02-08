@@ -1,7 +1,7 @@
 {
   "domain": "fritzbox_tickets",
   "name": "FRITZ!Box Internet Tickets",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "documentation": "https://github.com/videejay/hacs-fritzbox-ticket/",
   "config_flow": true,
   "iot_class": "local_polling",
