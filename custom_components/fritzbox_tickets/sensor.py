@@ -77,7 +77,7 @@ async def async_setup_entry(
 
 class FritzboxTicketsSensor(Entity):
     """
-    FRITZ!Box Internet Tickets sensor with extensive debug logging
+    FRITZ!Box Internet Tickets sensor (FHEM-compatible)
     """
 
     def __init__(self, hass: HomeAssistant, data):
@@ -187,13 +187,14 @@ class FritzboxTicketsSensor(Entity):
             _LOGGER.debug("Raw ticket query response: %s", data)
 
             tickets = []
-            if isinstance(data, list):
-                for entry in data:
+
+            # FIX: FRITZ!Box returns {"query": [ ... ]}
+            if isinstance(data, dict) and "query" in data:
+                for entry in data["query"]:
                     if isinstance(entry, dict) and "id" in entry:
                         tickets.append(entry["id"])
 
             _LOGGER.debug("Parsed tickets: %s", tickets)
-
             self._tickets = tickets
 
         except asyncio.CancelledError:
