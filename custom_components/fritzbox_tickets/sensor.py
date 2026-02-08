@@ -1,3 +1,4 @@
+import asyncio
 import aiohttp
 import hashlib
 import xml.etree.ElementTree as ET
@@ -12,7 +13,7 @@ from .const import CONF_HOST, CONF_USERNAME, CONF_PASSWORD
 # Home Assistant polling interval
 SCAN_INTERVAL = timedelta(minutes=5)
 
-# FRITZ!Box SID validity (renew a bit earlier)
+# FRITZ!Box SID validity (renew a bit earlier than real timeout)
 SID_LIFETIME = timedelta(minutes=9)
 
 
@@ -21,10 +22,13 @@ async def _login_sid(session, host, username, password):
     Perform AVM challenge-response login and return SID
     """
     # Step 1: get challenge
-    async with session.get(f"{host}/login_sid.lua") as resp:
+    async with session.get(f"{host}/login_sid.lua", timeout=10) as resp:
         xml = await resp.text()
         root = ET.fromstring(xml)
         challenge = root.findtext("Challenge")
+
+    if not challenge:
+        raise Exception("FRITZ!Box did not return challenge")
 
     # Step 2: calculate response
     response_hash = hashlib.md5(
@@ -39,6 +43,7 @@ async def _login_sid(session, host, username, password):
             "username": username,
             "response": response,
         },
+        timeout=10,
     ) as resp:
         xml = await resp.text()
         root = ET.fromstring(xml)
@@ -60,8 +65,8 @@ async def async_setup_entry(
 
 class FritzboxTicketsSensor(Entity):
     """
-    Sensor that exposes FRITZ!Box internet tickets
-    using AVM luaQuery (FHEM-compatible).
+    Sensor exposing FRITZ!Box Internet Tickets
+    using AVM luaQuery.
     """
 
     def __init__(self, data):
@@ -118,25 +123,32 @@ class FritzboxTicketsSensor(Entity):
     async def async_update(self):
         """
         Fetch ticket list via AVM luaQuery
+        (same mechanism as FHEM)
         """
-        async with aiohttp.ClientSession() as session:
-            sid = await self._get_sid(session)
+        try:
+            async with aiohttp.ClientSession() as session:
+                sid = await self._get_sid(session)
 
-            async with session.get(
-                f"{self._host}/luaquery.lua",
-                params={
-                    "sid": sid,
-                    "query": "userticket:settings/ticket/list(id)",
-                },
-                timeout=10,
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
+                async with session.get(
+                    f"{self._host}/luaquery.lua",
+                    params={
+                        "sid": sid,
+                        "query": "userticket:settings/ticket/list(id)",
+                    },
+                    timeout=10,
+                ) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
 
-        tickets = []
-        if isinstance(data, list):
-            for entry in data:
-                if isinstance(entry, dict) and "id" in entry:
-                    tickets.append(entry["id"])
+            tickets = []
+            if isinstance(data, list):
+                for entry in data:
+                    if isinstance(entry, dict) and "id" in entry:
+                        tickets.append(entry["id"])
 
-        self._tickets = tickets
+            self._tickets = tickets
+
+        except asyncio.CancelledError:
+            # Home Assistant shutdown / restart in progress
+            # -> do not log as error
+            return
